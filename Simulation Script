@@ -1,0 +1,941 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Mon Feb  8 09:41:37 2021
+
+@author: Nathalie
+"""
+
+import scipy as sp
+import pandas as pd
+import numpy as np
+from numpy import ndarray
+import matplotlib.pyplot as plt
+from scipy.signal import find_peaks, peak_widths
+from scipy.stats import norm
+from random import random
+from math import floor
+from scipy import optimize
+from astropy import modeling
+from mpl_toolkits import mplot3d
+from scipy import interpolate
+from scipy.optimize import curve_fit
+
+
+data = pd.read_csv("Experiment_Data.csv")
+df = pd.DataFrame(data)
+
+array = df.to_numpy()
+
+#Creating for each column of data
+Bin = np.zeros(len(array)-6) #Subtract the number of rows containing headers \
+                            #from the length  of the array
+No_Source = np.zeros(len(array)-6)
+Na22 = np.zeros(len(array)-6)
+Mn54 = np.zeros(len(array)-6)
+Cs137_0deg = np.zeros(len(array)-6)
+Am241 = np.zeros(len(array)-6)
+Cs137_20deg_scattering = np.zeros(len(array)-6)
+Cs137_20deg_background = np.zeros(len(array)-6)
+Cs137_30deg_scattering = np.zeros(len(array)-6)
+Cs137_30deg_background = np.zeros(len(array)-6)
+Cs137_45deg_scattering = np.zeros(len(array)-6)
+Cs137_45deg_background = np.zeros(len(array)-6)
+
+i = 0
+while i < len(array) - 6:
+    Bin[i] = array[i + 6][0]
+    No_Source[i] = array[i + 6][1]
+    Na22[i] = array[i + 6][2]
+    Mn54[i] = array[i + 6][3]
+    Cs137_0deg[i] = array[i + 6][4]
+    Am241[i] = array[i + 6][5]
+    Cs137_20deg_scattering[i] = array[i + 6][6]
+    Cs137_20deg_background[i] = array[i + 6][7]
+    Cs137_30deg_scattering[i] = array[i + 6][8]
+    Cs137_30deg_background[i] = array[i + 6][9]
+    Cs137_45deg_scattering[i] = array[i + 6][10]
+    Cs137_45deg_background[i] = array[i + 6][11]
+    
+    i += 1
+    
+    
+#Subtracting the background radiation
+i = 0
+while i < len(No_Source):
+    Na22[i] = Na22[i] - No_Source[i]
+    Mn54[i] = Mn54[i] - No_Source[i]
+    Am241[i] = Am241[i] - No_Source[i]
+    Cs137_0deg[i] = Cs137_0deg[i] - No_Source[i]
+    Cs137_20deg_scattering[i] = Cs137_20deg_scattering[i] -\
+    Cs137_20deg_background[i]
+    Cs137_30deg_scattering[i] = Cs137_30deg_scattering[i] - \
+    Cs137_30deg_background[i]
+    Cs137_45deg_scattering[i] = Cs137_45deg_scattering[i] - \
+    Cs137_45deg_background[i]
+    i += 1
+    
+
+
+def Plot(Signal, Signal_name, Filter = False):
+    """Input a signal array from the experimental data to get a plot of the 
+    data with peak indices and widths. If desired, filter out the region of 
+    0-315 keV for signals containing excessive background noise."""
+    if Filter == True:
+        Shift = int((370+ 30)/4)
+        
+    else:
+        Shift = 0
+    
+    Energy = -28.77963 + Bin[Shift: len(Signal)-1]*3.62686    
+    Signal = Signal[Shift: len(Signal)-1]
+    Signal_peaks = find_peaks(Signal, height = 10, threshold = 0, distance = \
+                              (+28.77963 + 200)/3.62686)
+    
+    i = 0
+    Signal_indices = np.zeros(len(Signal_peaks[0]))
+    
+    while i < len(Signal_peaks[0]):
+        Signal_indices[i] = Signal_peaks[0][i]
+        i += 1
+    Signal_heights = Signal_peaks[1]['peak_heights']
+    print ('Peak Heights = ', Signal_heights)
+    print ('Peak Indices = ', Signal_indices)
+    Energy_indices = (Signal_indices+Shift)*3.62686 - 28.77963
+    print ('Peak Energies = ', Energy_indices)
+    
+    def Gaussian(x, amplitude, mean, stddev):
+        return amplitude*np.exp(-(x-mean)**2/(2*(stddev**2)))
+    
+    
+    #Calculating the FWHM and mean for each peak (Original method)
+    i = 0
+    FWHM = np.zeros(len(Signal_indices))
+    mean_energies = np.zeros(len(Signal_indices))
+    width_index1 = np.zeros(len(Signal_indices))
+    width_index2 = np.zeros(len(Signal_indices))
+    Amplitudes = Signal_heights
+    while i < len(Signal_indices):
+        if len(Signal_indices) == 1:
+            Signal_Splice = Signal
+            width_index1[i] = np.amax(np.where(Signal_Splice >= \
+                        Signal_heights[i]/2))
+            width_index2[i] = np.amin(np.where(Signal_Splice >= \
+                        Signal_heights[i]/2))
+            FWHM[i] = (width_index1[i]-width_index2[i])*3.62686 
+            mean_energies[i] = ((width_index1[i]+width_index2[i])/2 +Shift)*\
+            3.62686 - 28.77963
+            i += 1
+        elif len(Signal_indices)>1:
+            if i == 0:
+                Signal_Splice = Signal[0:int((Signal_indices[0]+\
+                                              Signal_indices[1])/2)]
+                width_index1[i] = np.amax(np.where(Signal_Splice >= \
+                            Signal_heights[i]/2))
+                width_index2[i] = np.amin(np.where(Signal_Splice >= \
+                            Signal_heights[i]/2))
+                FWHM[i] = (width_index1[i]-width_index2[i])*3.62686
+                mean_energies[i] = ((width_index1[i]+width_index2[i])/2+Shift)\
+                *3.62686 - 28.77963
+                i += 1
+            elif i > 0 and i < len(Signal_indices)-1:
+                Signal_Splice = Signal[int((Signal_indices[i-1]+\
+                                            Signal_indices[i])/2):\
+    int((Signal_indices[i]+Signal_indices[i+1])/2)]
+                width_index1[i] = np.amax(np.where(Signal_Splice >= \
+                            Signal_heights[i]/2))
+                width_index2[i] = np.amin(np.where(Signal_Splice >= \
+                            Signal_heights[i]/2))
+                FWHM[i] = (width_index1[i]-width_index2[i])*3.62686
+                mean_energies[i] = ((width_index1[i]+width_index2[i])/\
+                             2+Shift+int((Signal_indices[i-1]+\
+                                        Signal_indices[i])/2))*\
+                             3.62686 - 28.77963
+                i += 1
+                
+            else:
+                Signal_Splice = Signal[int((Signal_indices[i-1]+\
+                                            Signal_indices[i])/2):\
+                                            len(Signal)-1]
+                width_index1[i] = np.amax(np.where(Signal_Splice >= \
+                            Signal_heights[i]/2))
+                width_index2[i] = np.amin(np.where(Signal_Splice >= \
+                            Signal_heights[i]/2))
+                FWHM[i] = (width_index1[i]-width_index2[i])*3.62686
+                mean_energies[i] = ((width_index1[i]+width_index2[i])/2+Shift+\
+                             int((Signal_indices[i-1]+Signal_indices[i])/2))*\
+                             3.62686 - 28.77963
+                i += 1
+        else:
+            print ("No peaks present in the signal")
+    """        
+    #Calculating the FWHM and mean for each peak (Combined method)
+    i = 0
+    FWHM = np.zeros(len(Signal_indices))
+    mean_energies = np.zeros(len(Signal_indices))
+    Amplitudes = np.zeros(len(Signal_indices))
+    width_index1 = np.zeros(len(Signal_indices))
+    width_index2 = np.zeros(len(Signal_indices))
+    while i < len(Signal_indices):
+        if len(Signal_indices) == 1:
+            Signal_Splice = Signal
+            Energy_Splice = Energy
+            width_index1[i] = np.amax(np.where(Signal_Splice >= \
+            Signal_heights[i]/2))
+            width_index2[i] = np.amin(np.where(Signal_Splice >= \
+            Signal_heights[i]/2))
+            FWHM[i] = (width_index1[i]-width_index2[i])*3.62686 
+            mean_energies[i] = ((width_index1[i]+width_index2[i])/2 +Shift)*\
+            3.62686 - 28.77963
+            popt,pcov = curve_fit(Gaussian, Energy_Splice, Signal_Splice, \
+            p0=[max(Signal_Splice), mean_energies[i], FWHM[i]/\
+            (2*np.sqrt(2*np.log(2)))])
+            Amplitudes[i] = popt[0]
+            mean_energies[i] = popt[1]
+            FWHM[i] = popt[2]*(2*np.sqrt(2*np.log(2)))
+            i += 1
+        elif len(Signal_indices)>1:
+            if i == 0:
+                Signal_Splice = Signal[0:int((Signal_indices[0]+\
+                Signal_indices[1])/2)]
+                Energy_Splice = Energy[0:int((Signal_indices[0]+\
+                Signal_indices[1])/2)]
+                width_index1[i] = np.amax(np.where(Signal_Splice >=\ 
+                Signal_heights[i]/2))
+                width_index2[i] = np.amin(np.where(Signal_Splice >= \
+                Signal_heights[i]/2))
+                FWHM[i] = (width_index1[i]-width_index2[i])*3.62686\
+                mean_energies[i] = ((width_index1[i]+width_index2[i])/2+\
+                Shift)*3.62686 - 28.77963
+                popt,pcov = curve_fit(Gaussian, Energy_Splice, Signal_Splice,\ 
+                p0=[max(Signal_Splice), mean_energies[i], FWHM[i]/\
+                (2*np.sqrt(2*np.log(2)))])
+                Amplitudes[i] = popt[0]
+                mean_energies[i] = popt[1]
+                FWHM[i] = popt[2]*(2*np.sqrt(2*np.log(2)))
+                i += 1
+            elif i > 0 and i < len(Signal_indices)-1:
+                Signal_Splice = Signal[int((Signal_indices[i-1]+\
+                Signal_indices[i])/2):int((Signal_indices[i]+\
+                Signal_indices[i+1])/2)]
+                Energy_Splice = Energy[int((Signal_indices[i-1]+\
+                Signal_indices[i])/2):int((Signal_indices[i]+\
+                Signal_indices[i+1])/2)]
+                width_index1[i] = np.amax(np.where(Signal_Splice >=\ 
+                Signal_heights[i]/2))
+                width_index2[i] = np.amin(np.where(Signal_Splice >= \
+                Signal_heights[i]/2))
+                FWHM[i] = (width_index1[i]-width_index2[i])*3.62686\
+                mean_energies[i] = ((width_index1[i]+width_index2[i])/2+Shift+\
+                int((Signal_indices[i-1]+Signal_indices[i])/2))*3.62686 - \
+                28.77963
+                popt,pcov = curve_fit(Gaussian, Energy_Splice, Signal_Splice,\ 
+                p0=[max(Signal_Splice), mean_energies[i], FWHM[i]/\
+                (2*np.sqrt(2*np.log(2)))])
+                Amplitudes[i] = popt[0]
+                mean_energies[i] = popt[1]
+                FWHM[i] = popt[2]*(2*np.sqrt(2*np.log(2)))
+                i += 1
+                
+            else:
+                Signal_Splice = Signal[int((Signal_indices[i-1]+\
+                Signal_indices[i])/2):len(Signal)-1]
+                Energy_Splice = Energy[int((Signal_indices[i-1]+\
+                Signal_indices[i])/2):len(Signal)-1]
+                width_index1[i] = np.amax(np.where(Signal_Splice >=\ 
+                Signal_heights[i]/2))
+                width_index2[i] = np.amin(np.where(Signal_Splice >= \
+                Signal_heights[i]/2))
+                FWHM[i] = (width_index1[i]-width_index2[i])*3.62686\
+                mean_energies[i] = ((width_index1[i]+width_index2[i])/\
+                2+Shift+int((Signal_indices[i-1]+Signal_indices[i])/2))*3.62686\
+                - 28.77963
+                popt,pcov = curve_fit(Gaussian, Energy_Splice, Signal_Splice, \
+                p0=[max(Signal_Splice), mean_energies[i], FWHM[i]/\
+                (2*np.sqrt(2*np.log(2)))])
+                Amplitudes[i] = popt[0]
+                mean_energies[i] = popt[1]
+                FWHM[i] = popt[2]*(2*np.sqrt(2*np.log(2)))
+                i += 1
+        else:
+            print ("No peaks present in the signal")
+    
+
+    
+    #Calculating the FWHM and mean for each peak -- Alternate Method
+    i = 0
+    FWHM = np.zeros(len(Signal_indices))
+    mean_energies = np.zeros(len(Signal_indices))
+    Amplitudes = np.zeros(len(Signal_indices))
+    while i < len(Signal_indices):
+        if len(Signal_indices) == 1:
+            Signal_Splice = Signal
+            Energy_Splice = Energy
+            mean_energies = sum(Energy_Splice * Signal_Splice) /\ 
+            sum(Signal_Splice)
+            sigma = np.sqrt(sum(Signal_Splice * (Energy_Splice - mean)**2) /\ 
+            sum(Signal_Splice))
+            popt,pcov = curve_fit(Gaussian, Energy_Splice, Signal_Splice, \
+            p0=[max(Signal_Splice), Energy_indices[i], sigma])
+            Amplitudes[i] = popt[0]
+            FWHM[i] = popt[2]*(2*np.sqrt(2*np.log(2)))
+            peak_values[i] = popt[1]
+            i += 1
+        elif len(Signal_indices)>1:
+            if i == 0:
+                Signal_Splice = Signal[0:int((Signal_indices[0]+\
+                Signal_indices[1])/2)]
+                Energy_Splice = Energy[0:int((Signal_indices[0]+\
+                Signal_indices[1])/2)]
+                mean_energies = sum(Energy_Splice * Signal_Splice) /\ 
+                sum(Signal_Splice)
+                sigma = np.sqrt(sum(Signal_Splice * (Energy_Splice - mean)**2)\ 
+                / sum(Signal_Splice))
+                popt,pcov = curve_fit(Gaussian, Energy_Splice, Signal_Splice,\ 
+                p0=[max(Signal_Splice), Energy_indices[i], sigma])
+                Amplitudes[i] = popt[0]
+                FWHM[i] = popt[2]*(2*np.sqrt(2*np.log(2)))
+                peak_values[i] = popt[1]
+                i += 1
+            elif i > 0 and i < len(Signal_indices)-1:
+                Signal_Splice = Signal[int((Signal_indices[i-1]+\
+                Signal_indices[i])/2):int((Signal_indices[i]+\
+                Signal_indices[i+1])/2)]
+                Energy_Splice = Energy[int((Signal_indices[i-1]+\
+                Signal_indices[i])/2):int((Signal_indices[i]+\
+                Signal_indices[i+1])/2)]
+                mean_energies = sum(Energy_Splice * Signal_Splice) /\ 
+                sum(Signal_Splice)
+                sigma = np.sqrt(sum(Signal_Splice * (Energy_Splice - mean)**2) 
+                / sum(Signal_Splice))
+                popt,pcov = curve_fit(Gaussian, Energy_Splice, Signal_Splice,\ 
+                p0=[max(Signal_Splice), Energy_indices[i], sigma])
+                Amplitudes[i] = popt[0]
+                FWHM[i] = popt[2]*(2*np.sqrt(2*np.log(2)))
+                peak_values[i] = popt[1]
+                i += 1
+            else:
+                Signal_Splice = Signal[int((Signal_indices[i-1]+\
+                Signal_indices[i])/2):len(Signal)-1]
+                Energy_Splice = Energy[int((Signal_indices[i-1]+\
+                Signal_indices[i])/2):len(Signal)-1]
+                mean_energies = sum(Energy_Splice * Signal_Splice) /\ 
+                sum(Signal_Splice)
+                sigma = np.sqrt(sum(Signal_Splice * (Energy_Splice - mean)**2) 
+                / sum(Signal_Splice))
+                popt,pcov = curve_fit(Gaussian, Energy_Splice, Signal_Splice,\ 
+                p0=[max(Signal_Splice), Energy_indices[i], sigma])
+                Amplitudes[i] = popt[0]
+                FWHM[i] = popt[2]*(2*np.sqrt(2*np.log(2)))
+                peak_values[i] = popt[1]
+                i += 1
+        else:
+            print ("No peaks present in the signal")"""
+    
+
+    
+    plt.figure()
+    plt.plot(Energy, Signal)
+    plt.plot(Energy_indices, Signal_heights, 'x', label = 'Detected Peak')
+    #Plotting the Gaussian curve fits:
+    i=0
+    while i < len(Signal_indices):
+        stddev = FWHM[i]/(2*np.sqrt(2*np.log(2)))
+        Gauss_Fit = Amplitudes[i]*np.exp(-(Energy-mean_energies[i])**2/\
+                              (2*stddev**2))
+        plt.hlines(Amplitudes[i]/2, mean_energies[i] - FWHM[i]/2, \
+                   mean_energies[i] + FWHM[i]/2, color = 'C2', label = "FWHM")
+        plt.plot(Energy, Gauss_Fit, color = 'C3', label = "Fitted Gaussian")
+        i += 1  
+    plt.xlabel('Energy (keV)')
+    plt.ylabel('Number of events')
+    plt.title(f"Detected Pulses for {Signal_name}")
+    if len(Signal_indices) == 1:
+        plt.legend()
+    plt.show()
+
+    print("Peak Energies = ", mean_energies)
+    print("Peak Heights = ", Amplitudes)
+    print ("FWHM = ", FWHM)
+    
+    #Saves the output data in the form of a .csv file.
+    np.savetxt(f'{Signal_name}.csv', [p for p in zip(Energy, Signal)], 
+                                   delimiter = ',', fmt = '%s' )
+    
+def ComptonEnergy(gamma0, angle):
+    """This function gives the expected value of the Compton-scattered photon
+    energies, using the initial non-scattered photon energy in units of keV.
+    
+    *IMPORTANT*: Make sure gamma0 is in units of kEV!!!!!!"""
+    
+    rest_me = 511 #Rest mass of an electron in keV
+    q = 1.6e-16 #Charge of an electron
+    gamma = (((gamma0*(1e6)*q)/(1+(gamma0/rest_me)*(1-\
+               np.cos(np.deg2rad(angle)))))/(q*(1e6)))
+    
+    return gamma
+    
+def MonteCarlo(gamma0, angle, gain, bit_depth, max_signal, resolution, 
+               bin_width, path_length, target_diameter, aperture_diameter, 
+               events = 151):
+    """This function generates a Monte Carlo simulation of a Compton scattering
+    experiment using the following parameters:
+        Inputs
+        -------
+        [SOURCE]
+            gamma0 = Photon energy in keV at 0 degrees
+            events = Number of pulses in the detector
+            
+        [TARGET]
+            angle = Intended scattering angle
+            path_length = Distance between the source and the target
+            target_diameter = Diameter of the target
+            
+        [DETECTOR]
+            gain = Amplification of input signal in V/keV
+            bit_depth = MCA bit depth
+            max_signal = MCA max signal in V
+            resolution = Resolution of the detector
+            bin_width = Width of each bin in the output histogram plot
+            aperture_diameter = Diameter of the aperture
+            
+        Returns
+        -------
+        [Counts, Cumulative_Error]   
+        Cumulative Error = sqrt(FWHM^2 + (1/Counts))"""
+    
+
+    #Maximum and minimum scattering angles obtained from finite target size, as
+    #determined by bouncing a gamma photon off the uppermost, and lowermost,
+    #leftmost, and rightmost points on the target, respectively:
+    
+    Theta_max_1 = 180 - 2*np.rad2deg(np.arctan((path_length*np.sin(np.deg2rad(
+            (180-angle)/2)))/(path_length*np.cos(np.deg2rad((180-angle)/2))+
+    (target_diameter/2))))
+    Theta_min_1 = 180 - 2*np.rad2deg(np.arctan((path_length*np.sin(np.deg2rad(
+            (180-angle)/2)))/abs((path_length*np.cos(np.deg2rad((180-angle)/2))
+    -(target_diameter/2)))))
+    
+    Theta_max_2 = 180 - 2*np.rad2deg(np.arctan(abs(path_length*np.sin
+                                                   (np.deg2rad((180-angle)/2))-
+                                                   (target_diameter/2))/
+    (path_length*np.cos(np.deg2rad((180-angle)/2)))))     
+    Theta_min_2 = 180 - 2*np.rad2deg(np.arctan((path_length*np.sin
+                                                (np.deg2rad((180-angle)/2))+
+                                                (target_diameter/2))/
+    (abs(path_length*np.cos(np.deg2rad((180-angle)/2))))))
+    
+    if path_length*np.sin(np.deg2rad((180-angle)/2))-(target_diameter/2) < 0:
+        Theta_max_2 = Theta_max_2 * - 1
+    
+    if path_length*np.cos(np.deg2rad((180-angle)/2))-(target_diameter/2) < 0:
+        Theta_min_1 = Theta_min_1 * - 1
+    
+    Max_Angle = max([Theta_max_1, Theta_min_1, Theta_max_2, Theta_min_2])      
+    
+    Min_Angle = min([Theta_max_1, Theta_min_1, Theta_max_2, Theta_min_2])
+    
+    print ("Scattering angle = ", angle)
+    print("Target Diameter = ", target_diameter)
+    print("Aperture Diameter = ", aperture_diameter)
+    print(Theta_max_1, Theta_max_2, Theta_min_1, Theta_min_2)
+    print ("Minimum Angle = ", Min_Angle)
+    print ("Maximum Angle = ", Max_Angle)
+    print("Minimum Energy = ", ComptonEnergy(gamma0, Min_Angle))
+    print("Maximum Energy = ", ComptonEnergy(gamma0, Max_Angle))    
+
+    
+    #Specifying the minimum and maximum scattering angles allowed into the 
+    #detector by the aperture:
+
+    Aperture_min = angle - np.rad2deg(np.arctan(aperture_diameter/
+                                                (2*path_length)))
+    Aperture_max = angle + np.rad2deg(np.arctan(aperture_diameter/
+                                                (2*path_length)))
+    
+    print("Aperture range = ", [Aperture_min, Aperture_max])
+    
+    if target_diameter == 0:
+        array = np.array([])
+        theta = angle
+        gamma = ComptonEnergy(gamma0, theta)
+        signal = gamma*gain
+    else:
+        array = np.array([])
+        theta = (Max_Angle-Min_Angle)*random() + Min_Angle
+        gamma = ComptonEnergy(gamma0, abs(theta))
+        signal = gamma*gain
+    if theta <= Aperture_max and theta >= Aperture_min:
+        noise = norm.ppf(random(), 0, (resolution*signal)/2)
+        value = floor((2**bit_depth) * (signal + noise)/max_signal)
+        array = np.append(array, value)
+            
+    print(array)
+    
+    
+    print ([theta, gamma])
+    
+    #Allocating each event to a bin value, assuming an isotropic point source
+    outcome_bin = np.array([])
+    i = 0 
+    while i < events:
+        theta = random()*(Max_Angle-Min_Angle) + Min_Angle
+        gamma = ComptonEnergy(gamma0, theta)
+        signal = gamma*gain
+        if theta <= Aperture_max and theta >= Aperture_min:
+            noise = norm.ppf(random(), 0, (resolution*signal)/2)
+            outcome_value = floor((2**bit_depth) * (signal + noise)/max_signal)
+            outcome_bin = np.append(outcome_bin, outcome_value)
+            i += 1
+        else:
+            i += 1
+            
+            
+    print ("Number of detected events = ", len(outcome_bin))
+    print (outcome_bin)
+    #Counting the number of events in each bin    
+    bins = np.arange(0, 1015, bin_width)
+    bin_values = np.zeros(len(bins))
+    i = 0
+    while i < len(bin_values):
+        bin_values[i] = sum(p < bins[i] + bin_width and p >= bins[i] for p in 
+                  outcome_bin)
+        i += 1
+        
+    plt.figure()
+    plt.plot(bins, bin_values)
+    plt.xlabel('Bin')
+    plt.ylabel('Number of detected events')
+    plt.title('Simulated Data in MCA')
+    plt.show()
+    
+    #Converting bins into gamma energy intervals in units of keV
+    Energy = ((bins*max_signal)/(2**bit_depth))/gain
+    Energy_outcomes = ((outcome_bin*max_signal)/(2**bit_depth))/gain
+    Energy_width = ((bin_width*max_signal)/(2**bit_depth))/gain
+    
+    #Sorting events into energy bins
+    Counts = np.zeros(len(Energy))
+    i = 0
+    while i < len(Counts):
+        Counts[i] = sum(p < Energy[i] + Energy_width and p >= Energy [i] for p 
+              in Energy_outcomes)
+        i += 1
+    
+        
+    #Calculating peak energy
+    #resolution_error = (resolution*gamma)/2
+    peak = find_peaks(Counts, height = 1, threshold = 0, distance = 1)
+    peak_index = peak[0]
+    peak_height = peak[1]['peak_heights']
+    peak_energy = Energy[peak_index]
+    
+    def Gaussian(x, amplitude, mean, stddev):
+        return amplitude*np.exp(-(x-mean)**2/(2*(stddev**2)))
+    
+    if len(outcome_bin) == 0:
+        print ("No events detected")
+        return [0, np.Infinity]
+    
+    elif  len(outcome_bin) == 1:
+        peak_height = 1
+        peak_energy = Energy_outcomes[0]
+        stddev = Energy_width/6
+        FWHM = stddev*(2*np.sqrt(2*np.log(2)))
+        GaussFit = Gaussian(Energy, peak_height, peak_energy, stddev)
+        
+        #Plotting the figures
+        plt.figure()
+        plt.plot(Energy, Counts)
+        plt.plot(peak_energy, peak_height, 'x', label = 'Peak Energy')
+        plt.hlines(peak_height/2, peak_energy-(FWHM/2), peak_energy+(FWHM/2), 
+                   color = 'C2', label = 'FWHM')
+        plt.plot(Energy, GaussFit, label = 'Gaussian', color = 'C3')
+        plt.xlabel('Energy (keV)')
+        plt.ylabel('Number of events')
+        plt.title('Calibrated Simulation Data')
+        plt.legend()
+        plt.show()
+        
+        print ("Peak height = ", peak_height)
+        print ('Peak Energy = ', peak_energy)
+        print('FWHM = ', FWHM)
+        print('Standard Deviation = ', stddev)
+        return [len(outcome_bin), np.sqrt((FWHM/2)**2 + 
+                    peak_energy/len(outcome_bin))]
+    else:    
+        #Initial approximation of peak energy
+        peak_height = max(Counts)
+        peak_index = Counts.tolist().index(peak_height)
+        peak_energy = Energy[peak_index]
+        
+        #Initial approximation of FWHM
+        width_index1 = np.amin(np.where(Counts >= peak_height/2))
+        width_index2 = np.amax(np.where(Counts >= peak_height/2))
+        width_energy1 = Energy[width_index1]
+        width_energy2 = Energy[width_index2]
+        #FWHM = width_energy2 - width_energy1
+        peak_energy = (width_energy2 + width_energy1)/2
+        peak_energy = sum(Energy * Counts) / sum(Counts)
+        stddev = np.sqrt(sum(Counts * (Energy - peak_energy)**2) / sum(Counts))
+    
+        #Fitting a Gaussian to the simulated data:
+        #stddev = FWHM/(2*np.sqrt(2*np.log(2)))
+        FWHM = stddev * (2*np.sqrt(2*np.log(2)))
+        GaussFit = Gaussian(Energy, peak_height, peak_energy, stddev)
+        
+        print ("max(Counts) = ", max(Counts))
+    
+        #Plotting the figures
+        plt.figure()
+        plt.plot(Energy, Counts)
+        plt.plot(peak_energy, peak_height, 'x', label = 'Peak Energy')
+        plt.hlines(peak_height/2, peak_energy-(FWHM/2), peak_energy+(FWHM/2), \
+                   color = 'C2', label = 'FWHM')
+        plt.plot(Energy, GaussFit, label = 'Gaussian', color = 'C3')
+        plt.xlabel('Energy (keV)')
+        plt.ylabel('Number of events')
+        plt.title('Calibrated Simulation Data')
+        plt.legend()
+        plt.show()
+        
+        print ("Peak height = ", peak_height)
+        print ("Peak Energy = ", peak_energy)
+        print("FWHM = ", FWHM)
+        print("FWHM/2 = ", FWHM/2)
+        return [len(outcome_bin), np.sqrt((FWHM/2)**2 + peak_energy/\
+                    len(outcome_bin))]
+    
+def plot3D(gamma0, angle, gain, bit_depth, max_signal, resolution, bin_width,
+           path_length, events):
+    """Making a 3D plot of the simulation data by plotting target radius and 
+    aperture radius on the x and y axes, and the FWHM of the signal peak on the
+    z axis. This function """
+    
+    #Defining a function which generates the cumulative error of a signal for 
+    #two input variables the target diameter and the aperture diameter.
+    def Error(target_diameter, aperture_diameter):
+        i = MonteCarlo(gamma0, angle, gain, bit_depth, max_signal, 
+                          resolution, bin_width, path_length, target_diameter, 
+                          aperture_diameter, events)
+        return i
+        
+    target_diameter = np.linspace(0.005, 0.250, 50)
+    aperture_diameter = np.linspace(0.005, 0.250, 50)
+    size = (len(aperture_diameter), len(target_diameter))
+    Z = np.zeros(size)
+     
+
+    
+    x = 0
+    y = 0
+    
+    minimum = [np.Infinity, 0, 0]
+    
+    
+    while y < len(aperture_diameter):
+        while x < len(target_diameter):
+            Simulation_values = Error(target_diameter[x], aperture_diameter[y])
+            if Simulation_values[1] == np.inf:
+                Z[y][x] = 9999
+            else:
+                Z[y][x] = Simulation_values[1]
+            if minimum[0] > Z[y][x]:
+                minimum[0] = Z[y][x]
+                minimum[1] = target_diameter[x]
+                minimum[2] = aperture_diameter[y]
+                Min_Counts = Simulation_values[0]
+            x += 1
+        y += 1
+        x = 0
+    
+    
+    print (Z)
+
+
+
+    plt.figure()
+    ax = plt.figure().gca(projection='3d')
+    ax.plot_surface(target_diameter, aperture_diameter, Z, cmap='plasma')
+    ax.set_xlabel('Target Diameter (m)')
+    ax.set_ylabel('Aperture Diameter (m)')
+    ax.set_zlim(0, 100)
+    ax.set_ylim(0.10, 0)
+    ax.set_zlabel('Number of Counts')
+    plt.tight_layout()
+    plt.show()
+    
+    print ("Parameters at Minimum Error = ", minimum)
+    print ("Counts at Minimum = ", Min_Counts)
+    
+    X = np.concatenate(aperture_diameter.T*np.ones((len(target_diameter), 
+                                                    len(aperture_diameter))))
+    Y = np.ones((len(aperture_diameter), len(target_diameter)))
+    i = 0
+    while i < len(aperture_diameter):
+        Y[i] = Y[i]*aperture_diameter[i]
+        i += 1
+    Y = np.concatenate(Y)
+    Z = np.concatenate(Z)
+    
+    np.savetxt(f'3Dplot.csv', [p for p in zip(X, Y, Z)], 
+                                   delimiter = ',', fmt = '%s' )
+    
+def plot2D_apertures(gamma0, angle, gain, bit_depth, max_signal, resolution, 
+                     bin_width, path_length, target_diameter, events):
+    """ Plots a range of cumulative errors for varying aperture diameter and 
+    set target diameter."""
+    
+    
+    apertures = np.linspace(0.001, 0.3, 50)
+    Cumulative_Error = np.zeros(len(apertures))
+    Counts = np.zeros(len(apertures))
+    
+    #Calculation of cumulative error in each simulation
+    i = 0
+    while i < len(apertures):
+        Cumulative_Error[i] = MonteCarlo(gamma0, angle, gain, bit_depth, 
+                        max_signal, resolution, bin_width, path_length, 
+                        target_diameter, apertures[i], events)[1]
+        i += 1
+    
+    #Number of counts for each simulation
+    i = 0
+    while i < len(apertures):
+        Counts[i] = MonteCarlo(gamma0, angle, gain, bit_depth, 
+                        max_signal, resolution, bin_width, path_length, 
+                        target_diameter, apertures[i], events)[0]
+        i += 1
+        
+    
+    
+    plt.figure()
+    plt.plot(apertures, Cumulative_Error, 'o')
+    plt.xlabel('Aperture Diameter (m)')
+    plt.ylabel('Cumulative Error (keV)')
+    plt.title('Cumulative Error vs Aperture Size')
+    
+    plt.figure()
+    plt.plot(apertures, Counts, 'o')
+    plt.xlabel('Aperture Diameter (m)')
+    plt.ylabel('Counts')
+    plt.title('Number of Detected Events')
+    plt.show()
+    
+    #Saves the output data in the form of a .csv file.
+    np.savetxt(f'Apertures2D_Errors.csv', [p for p in zip(apertures,
+                                                          Cumulative_Error)], 
+    delimiter = ',', fmt = '%s' )
+    
+    #Saves the output data in the form of a .csv file.
+    np.savetxt(f'Apertures2D_Counts.csv', [p for p in zip(apertures, Counts)], 
+                                   delimiter = ',', fmt = '%s' )
+    
+def plot2D_targets(gamma0, angle, gain, bit_depth, max_signal, resolution, 
+                     bin_width, path_length, aperture_diameter, events):
+    """ Plots a range of cumulative errors for varying aperture diameter and 
+    set target diameter."""
+    
+    
+    targets = np.linspace(0, 0.3, 50)
+    Cumulative_Error = np.zeros(len(targets))
+    Counts = np.zeros(len(targets))
+    
+    #Calculation of cumulative error for each simulation
+    i = 0
+    while i < len(targets):
+        Cumulative_Error[i] = MonteCarlo(gamma0, angle, gain, bit_depth, 
+                        max_signal, resolution, bin_width, path_length, 
+                        targets[i], aperture_diameter, events)[1]
+        i += 1
+    
+    #Number of counts for each simulation
+    i = 0
+    while i < len(targets):
+        Counts[i] = MonteCarlo(gamma0, angle, gain, bit_depth, 
+                        max_signal, resolution, bin_width, path_length, 
+                        targets[i], aperture_diameter, events)[0]
+        i += 1
+    
+    #targets2 = Lagrangian(targets,Cumulative_Error)[0]
+    #Cumulative_Error = Lagrangian(targets, Cumulative_Error)[1]
+    
+    plt.figure()
+    plt.plot(targets, Cumulative_Error, 'o')
+    plt.xlabel('Target Diameter (m)')
+    plt.ylabel('Cumulative Error (keV)')
+    plt.title('Cumulative Error vs Target Diameter')
+    
+    plt.figure()
+    plt.plot(targets, Counts, 'o')
+    plt.xlabel('Target Diameter (m)')
+    plt.ylabel('Counts')
+    plt.title('Number of Detected Events')
+    plt.show()
+    
+    #Saves the output data in the form of a .csv file.
+    np.savetxt(f'Targets2D_Errors.csv', [p for p in zip(targets,
+                                                          Cumulative_Error)], 
+    delimiter = ',', fmt = '%s' )
+    
+    #Saves the output data in the form of a .csv file.
+    np.savetxt(f'Targets2D_Counts.csv', [p for p in zip(targets, Counts)], 
+                                   delimiter = ',', fmt = '%s' )
+    
+def Lagrangian(x,y): 
+    """Inputs two data sets and performs Lagrange Polynomial
+    Interpolation to output values for an dth degree polynomial
+    
+    Parameters
+    -----------
+    x, y - arrays of equal length
+    
+    Returns
+    -----------
+    xn- evenly spaced numbers over interval defined by x
+    yn - corresponding Lagrange polynomial length xn
+    """
+    
+    
+    n = len(x)
+    d = n - 1 #Degree of polynomial
+    
+    xn = sp.linspace(x[0], x[-1])
+    #starts and stops at first and last element of x
+    
+    yn = sp.array([]) # initialise yn array
+    
+    for xi in xn:
+        
+        yi = 0 #Initialise yi
+        
+        for i in range(d+1):
+            p = 1 #Initialise multiplier as 1
+            
+            for j in range(d+1):
+                if j != i: #Set condition
+                    
+                    p = p * (xi-x[j])/(x[i] - x[j]) #perform product
+                    
+            yi += y[i] * p #perform sum
+           
+        yn = sp.append(yn, yi) #append yi to empty array
+        
+        
+    return xn, yn
+
+def Cubic_Spline(x, f):
+    """Stage 1 in performing Cubic Spline interpolation by solving the
+    matrix equation Mx = S where M is the constructed matrix of coefficients 
+    and x is a matrix of double derivatives
+    
+    Parameters
+    ----------
+    lists  x and f of equal length n
+    
+    Returns
+    -----------
+    DD- list of double derivatives length n-2
+    """
+    
+    n = len(x)
+    m = n - 2 
+    
+    size = (m,m)
+    #Initialise matrix of coefficients
+    #is a trimmed matrix after applying natural spline conditions
+    
+    M = sp.zeros(size) 
+    
+    a = [] #intialise lists
+    b = [] #Wil become coefficients in M
+    c = []
+    
+    S = [] #Solving Mx = S
+    #x is array of double derivatives
+    
+    for i in range(1, n - 1):
+       
+     a.append(((x[i] - x[i-1])/6))
+     b.append((x[i+1] - x[i -1])/3) #Append values
+     c.append((x[i+1] - x[i])/6)
+     
+     
+    for i in range(1, m+1):
+     
+     S1 = (f[i+1] - f[i])/(x[i+1] - x[i])
+     S2 = (f[i] -f[i-1])/(x[i] - x[i-1])
+     S.append(S1 - S2) #S can be 0 if S1 = S2, so if input arrays linear
+     
+    #Create matrix of coefficients M
+    for i in range(m):
+      M[i][i] = b[i] #Put b values on diagonals
+        
+    for i in range(1, m):
+      M[i][i-1] = a[i] 
+        
+    #put a and c values on off diagonals
+    for i in range(m -1):
+      M[i][i+1] = c[i]     
+
+    DD = sp.linalg.solve(M, S) #Call solve function from Q2
+     
+     
+    return DD 
+
+
+
+def Spline_Function(x, f, num = 50): #Creates the cubic interpolation function
+    #num is the length of output xn
+    #Determines the number of points used in the interpolation
+    #default is 50
+    
+    
+  
+  DD = Cubic_Spline(x, f) #Return array of double derivatives
+  
+  
+    
+  xn = sp.linspace(x[0], x[-1], num) #initialise xn
+  
+
+    
+  Function = sp.array([]) #initialise function arrays
+  
+  
+  Derivs = Cubic_Spline(x, f) #Produce double derivatives
+  DD1 = sp.insert(Derivs, 0, 0.)
+  DD = sp.insert(DD1, len(DD1), 0.) #Pad array to be of same length as x
+  
+
+  for xi in xn:
+    
+       u = sp.argmax(xi< x) 
+       l = u - 1
+       
+      
+       A = (x[u] - xi) / (x[u] - x[l])
+         
+       B = 1-A
+         
+       C = (1/6) * (A**3 - A) * (x[u] - x[l])**2
+        
+       D = (1/6) * (B**3 - B) * (x[u] - x[l]) **2
+                  
+             
+       Linear = A * f[l] + B * f[u] #Form linear part of function
+        
+      
+       Cubic = C * DD[l] + D* DD[u] #Form cubic part of function
+        
+             
+       Fun = Linear + Cubic #Sum the two parts
+        
+       Function = sp.append(Function, Fun) #Append to initialised array
+
+                
+  return [xn, Function]
+
+
+    
+    
+      
